@@ -49,7 +49,7 @@ npm run sync
 
 - The configuration file defines source domains and their target URLs
 - On push to main branch, GitHub Actions automatically validates and syncs redirects
-- Redirects are implemented as Cloudflare Page Rules with 301 redirects
+- Redirects are implemented as Cloudflare Rulesets with 301 redirects
 - Existing auto-generated rules are cleaned up before creating new ones
 
 ## Troubleshooting
@@ -64,7 +64,7 @@ npm run sync
 ### API Permissions
 
 Your Cloudflare API token needs these permissions:
-- Zone:Page Rules (Edit)
+- Account:Rulesets (Edit)
 - Zone:Read
 
 ## Testing
