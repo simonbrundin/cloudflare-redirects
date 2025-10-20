@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-function validateRedirectsConfig(configPath = '../redirects.json') {
+function validateRedirectsConfig(configPath = './redirects.json') {
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
