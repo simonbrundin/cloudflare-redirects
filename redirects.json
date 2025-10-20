@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "redirects": {
-    "blog.simonbrundin.com": "https://blog.example.com",
+    "aik.simonbrundin.com": "https://aik.se",
     "bootstrap.simonbrundin.com": "https://raw.githubusercontent.com/simonbrundin/bootstrap/refs/heads/main/bootstrap.sh"
   }
 }
