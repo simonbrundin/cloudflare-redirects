@@ -2,7 +2,8 @@
   "version": "1.0",
   "redirects": {
     "blog.simonbrundin.com": "https://blog.example.com",
-    "api.simonbrundin.com": "https://api.example.com"
+    "api.simonbrundin.com": "https://api.example.com",
+    "docs.otherdomain.com": "https://docs.example.com"
   }
 }
 

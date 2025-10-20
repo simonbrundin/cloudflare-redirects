@@ -45,7 +45,7 @@ async function getRedirectRuleset(zoneId) {
     );
     const rulesets = response.data.result;
     let redirectRuleset = rulesets.find(
-      (rs) => rs.phase === "http_request_redirect",
+      (rs) => rs.phase === "http_request_dynamic_redirect",
     );
     if (!redirectRuleset) {
       // Create new ruleset
@@ -54,7 +54,7 @@ async function getRedirectRuleset(zoneId) {
         {
           name: "Auto-generated redirects",
           kind: "zone",
-          phase: "http_request_redirect",
+          phase: "http_request_dynamic_redirect",
           rules: [],
         },
         {

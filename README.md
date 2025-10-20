@@ -64,7 +64,7 @@ npm run sync
 ### API Permissions
 
 Your Cloudflare API token needs these permissions:
-- Account:Rulesets (Edit)
+- Zone:Single Redirect (Edit)
 - Zone:Read
 
 ## Testing
