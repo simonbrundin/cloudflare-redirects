@@ -10,7 +10,7 @@ if (!API_TOKEN) {
   process.exit(1);
 }
 
-async function getZoneId(domain) {
+async function getZoneAndAccountId(domain) {
   try {
     const response = await axios.get(
       `${CLOUDFLARE_API_BASE}/zones?name=${domain}`,
@@ -24,10 +24,11 @@ async function getZoneId(domain) {
     if (response.data.result.length === 0) {
       throw new Error(`Zone not found for domain: ${domain}`);
     }
-    return response.data.result[0].id;
+    const zone = response.data.result[0];
+    return { zoneId: zone.id, accountId: zone.account.id };
   } catch (error) {
     throw new Error(
-      `Failed to get zone ID for ${domain}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+      `Failed to get zone/account ID for ${domain}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
     );
   }
 }
@@ -58,13 +59,14 @@ async function createOrUpdateRuleset(zoneId, rules) {
       name: "auto-generated-redirects",
       description: "auto-generated-redirects",
       kind: "zone",
-      phase: "http_request_redirect",
+      phase: "http_request_dynamic_redirect",
       rules: rules.map(({ source, target }) => ({
         expression: `http.host eq "${source}"`,
         action: "redirect",
         action_parameters: {
           from_value: {
             status_code: 301,
+            preserve_query_string: true,
             target_url: {
               value: target
             }
@@ -166,7 +168,7 @@ async function syncRedirects() {
     for (const [zoneDomain, rules] of Object.entries(zoneRedirects)) {
       console.log(`Processing zone: ${zoneDomain}`);
 
-      const zoneId = await getZoneId(zoneDomain);
+      const { zoneId } = await getZoneAndAccountId(zoneDomain);
 
       // Clean up old DNS records (for backwards compatibility)
       await deleteOldDNSRecords(zoneId);
