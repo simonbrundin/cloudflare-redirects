@@ -49,8 +49,9 @@ npm run sync
 
 - The configuration file defines source domains and their target URLs
 - On push to main branch, GitHub Actions automatically validates and syncs redirects
-- Redirects are implemented as Cloudflare Rulesets with 301 redirects
-- Existing auto-generated rules are cleaned up before creating new ones
+- Redirects are implemented as Cloudflare Rulesets with 301 redirects (HTTP redirect rules, not DNS CNAME records)
+- Existing auto-generated rulesets are updated before creating new ones
+- Old CNAME records from previous versions are cleaned up automatically
 
 ## Troubleshooting
 
@@ -60,11 +61,12 @@ npm run sync
 2. **API rate limits**: The script includes basic error handling; wait and retry if needed
 3. **Invalid config**: Run `npm run validate` to check your `redirects.json` file
 4. **Workflow fails**: Check GitHub Actions logs for detailed error messages
+5. **Redirects not working**: Ensure the source domains have DNS records pointing to Cloudflare (A/CNAME records for the zone)
 
 ### API Permissions
 
 Your Cloudflare API token needs these permissions:
-- Zone:Single Redirect (Edit)
+- Zone:Rulesets (Edit)
 - Zone:Read
 
 ## Testing

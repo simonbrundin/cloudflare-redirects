@@ -32,8 +32,86 @@ async function getZoneId(domain) {
   }
 }
 
-async function getExistingDNSRecords(zoneId) {
+async function getExistingRulesets(zoneId) {
   try {
+    const response = await axios.get(
+      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
+      {
+        headers: {
+          Authorization: `Bearer ${API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    return response.data.result.filter(ruleset => ruleset.description === "auto-generated-redirects");
+  } catch (error) {
+    throw new Error(
+      `Failed to get rulesets: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+    );
+  }
+}
+
+async function createOrUpdateRuleset(zoneId, rules) {
+  try {
+    const existingRulesets = await getExistingRulesets(zoneId);
+    const rulesetData = {
+      name: "auto-generated-redirects",
+      description: "auto-generated-redirects",
+      kind: "zone",
+      phase: "http_request_redirect",
+      rules: rules.map(({ source, target }) => ({
+        expression: `http.host eq "${source}"`,
+        action: "redirect",
+        action_parameters: {
+          from_value: {
+            status_code: 301,
+            target_url: {
+              value: target
+            }
+          }
+        },
+        description: `Redirect ${source} to ${target}`
+      }))
+    };
+
+    if (existingRulesets.length > 0) {
+      // Update existing ruleset
+      const rulesetId = existingRulesets[0].id;
+      await axios.put(
+        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets/${rulesetId}`,
+        rulesetData,
+        {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      console.log(`Updated ruleset for zone ${zoneId}`);
+    } else {
+      // Create new ruleset
+      await axios.post(
+        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
+        rulesetData,
+        {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      console.log(`Created ruleset for zone ${zoneId}`);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to create/update ruleset for zone ${zoneId}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+    );
+  }
+}
+
+async function deleteOldDNSRecords(zoneId) {
+  try {
+    // Get existing DNS records
     const response = await axios.get(
       `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records`,
       {
@@ -43,55 +121,26 @@ async function getExistingDNSRecords(zoneId) {
         },
       },
     );
-    return response.data.result;
-  } catch (error) {
-    throw new Error(
-      `Failed to get DNS records: ${error.response?.data?.errors?.[0]?.message || error.message}`,
-    );
-  }
-}
+    const existingRecords = response.data.result;
 
-async function createDNSRecord(zoneId, name, content) {
-  try {
-    await axios.post(
-      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records`,
-      {
-        type: "CNAME",
-        name,
-        content,
-        ttl: 1, // Auto
-        proxied: true,
-        comment: "auto-generated-redirect",
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${API_TOKEN}`,
-          "Content-Type": "application/json",
+    // Delete existing auto-generated CNAME records
+    const autoRecords = existingRecords.filter(
+      (record) => record.comment === "auto-generated-redirect",
+    );
+    for (const record of autoRecords) {
+      console.log(`Deleting old DNS record: ${record.name}`);
+      await axios.delete(
+        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records/${record.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
         },
-      },
-    );
+      );
+    }
   } catch (error) {
-    throw new Error(
-      `Failed to create DNS record for ${name}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
-    );
-  }
-}
-
-async function deleteDNSRecord(zoneId, recordId) {
-  try {
-    await axios.delete(
-      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records/${recordId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${API_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-  } catch (error) {
-    throw new Error(
-      `Failed to delete DNS record ${recordId}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
-    );
+    console.warn(`Warning: Failed to clean up old DNS records: ${error.message}`);
   }
 }
 
@@ -119,29 +168,12 @@ async function syncRedirects() {
 
       const zoneId = await getZoneId(zoneDomain);
 
-      // Get existing DNS records
-      const existingRecords = await getExistingDNSRecords(zoneId);
+      // Clean up old DNS records (for backwards compatibility)
+      await deleteOldDNSRecords(zoneId);
 
-      // Filter out auto-generated CNAME records
-      const nonAutoRecords = existingRecords.filter(
-        (record) => record.comment !== "auto-generated-redirect",
-      );
-
-      // Delete existing auto-generated CNAME records
-      const autoRecords = existingRecords.filter(
-        (record) => record.comment === "auto-generated-redirect",
-      );
-      for (const record of autoRecords) {
-        console.log(`Deleting old DNS record: ${record.name}`);
-        await deleteDNSRecord(zoneId, record.id);
-      }
-
-      // Create new auto-generated CNAME records
-      for (const { source, target } of rules) {
-        const targetDomain = target.replace(/^https?:\/\//, ""); // Remove protocol
-        console.log(`Creating CNAME: ${source} -> ${targetDomain}`);
-        await createDNSRecord(zoneId, source, targetDomain);
-      }
+      // Create or update ruleset with redirect rules
+      console.log(`Creating/updating redirect rules for ${rules.length} redirects`);
+      await createOrUpdateRuleset(zoneId, rules);
     }
 
     console.log("DNS synchronization completed successfully");
