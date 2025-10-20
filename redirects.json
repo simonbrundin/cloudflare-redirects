@@ -2,7 +2,7 @@
   "version": "1.0",
   "redirects": {
     "blog.simonbrundin.com": "https://blog.example.com",
-    "api.simonbrundin.com": "https://api.example.com"
+    "api.simonbrundin.com": "https://raw.githubusercontent.com/simonbrundin/cloudflare-redirects/refs/heads/main/README.md"
   }
 }
 
