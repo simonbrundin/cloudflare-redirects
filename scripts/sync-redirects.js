@@ -10,7 +10,7 @@ if (!API_TOKEN) {
   process.exit(1);
 }
 
-async function getZoneAndAccountId(domain) {
+async function getZoneId(domain) {
   try {
     const response = await axios.get(
       `${CLOUDFLARE_API_BASE}/zones?name=${domain}`,
@@ -24,16 +24,15 @@ async function getZoneAndAccountId(domain) {
     if (response.data.result.length === 0) {
       throw new Error(`Zone not found for domain: ${domain}`);
     }
-    const zone = response.data.result[0];
-    return { zoneId: zone.id, accountId: zone.account.id };
+    return response.data.result[0].id;
   } catch (error) {
     throw new Error(
-      `Failed to get zone/account ID for ${domain}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+      `Failed to get zone ID for ${domain}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
     );
   }
 }
 
-async function getExistingRulesets(zoneId) {
+async function getRedirectRuleset(zoneId) {
   try {
     const response = await axios.get(
       `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
@@ -44,57 +43,20 @@ async function getExistingRulesets(zoneId) {
         },
       },
     );
-    return response.data.result.filter(ruleset => ruleset.description === "auto-generated-redirects");
-  } catch (error) {
-    throw new Error(
-      `Failed to get rulesets: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+    const rulesets = response.data.result;
+    let redirectRuleset = rulesets.find(
+      (rs) => rs.phase === "http_request_redirect",
     );
-  }
-}
-
-async function createOrUpdateRuleset(zoneId, rules) {
-  try {
-    const existingRulesets = await getExistingRulesets(zoneId);
-    const rulesetData = {
-      name: "auto-generated-redirects",
-      description: "auto-generated-redirects",
-      kind: "zone",
-      phase: "http_request_dynamic_redirect",
-      rules: rules.map(({ source, target }) => ({
-        expression: `http.host eq "${source}"`,
-        action: "redirect",
-        action_parameters: {
-          from_value: {
-            status_code: 301,
-            preserve_query_string: true,
-            target_url: {
-              value: target
-            }
-          }
-        },
-        description: `Redirect ${source} to ${target}`
-      }))
-    };
-
-    if (existingRulesets.length > 0) {
-      // Update existing ruleset
-      const rulesetId = existingRulesets[0].id;
-      await axios.put(
-        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets/${rulesetId}`,
-        rulesetData,
-        {
-          headers: {
-            Authorization: `Bearer ${API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      console.log(`Updated ruleset for zone ${zoneId}`);
-    } else {
+    if (!redirectRuleset) {
       // Create new ruleset
-      await axios.post(
+      const createResponse = await axios.post(
         `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
-        rulesetData,
+        {
+          name: "Auto-generated redirects",
+          kind: "zone",
+          phase: "http_request_dynamic_redirect",
+          rules: [],
+        },
         {
           headers: {
             Authorization: `Bearer ${API_TOKEN}`,
@@ -102,20 +64,20 @@ async function createOrUpdateRuleset(zoneId, rules) {
           },
         },
       );
-      console.log(`Created ruleset for zone ${zoneId}`);
+      redirectRuleset = createResponse.data.result;
     }
+    return redirectRuleset;
   } catch (error) {
     throw new Error(
-      `Failed to create/update ruleset for zone ${zoneId}: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+      `Failed to get redirect ruleset: ${error.response?.data?.errors?.[0]?.message || error.message}`,
     );
   }
 }
 
-async function deleteOldDNSRecords(zoneId) {
+async function getRulesetRules(zoneId, rulesetId) {
   try {
-    // Get existing DNS records
     const response = await axios.get(
-      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records`,
+      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets/${rulesetId}`,
       {
         headers: {
           Authorization: `Bearer ${API_TOKEN}`,
@@ -123,26 +85,32 @@ async function deleteOldDNSRecords(zoneId) {
         },
       },
     );
-    const existingRecords = response.data.result;
-
-    // Delete existing auto-generated CNAME records
-    const autoRecords = existingRecords.filter(
-      (record) => record.comment === "auto-generated-redirect",
-    );
-    for (const record of autoRecords) {
-      console.log(`Deleting old DNS record: ${record.name}`);
-      await axios.delete(
-        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/dns_records/${record.id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-    }
+    return response.data.result.rules || [];
   } catch (error) {
-    console.warn(`Warning: Failed to clean up old DNS records: ${error.message}`);
+    throw new Error(
+      `Failed to get ruleset rules: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+    );
+  }
+}
+
+async function updateRulesetRules(zoneId, rulesetId, rules) {
+  try {
+    await axios.put(
+      `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets/${rulesetId}`,
+      {
+        rules,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `Failed to update ruleset rules: ${error.response?.data?.errors?.[0]?.message || error.message}`,
+    );
   }
 }
 
@@ -168,17 +136,48 @@ async function syncRedirects() {
     for (const [zoneDomain, rules] of Object.entries(zoneRedirects)) {
       console.log(`Processing zone: ${zoneDomain}`);
 
-      const { zoneId } = await getZoneAndAccountId(zoneDomain);
+      const zoneId = await getZoneId(zoneDomain);
 
-      // Clean up old DNS records (for backwards compatibility)
-      await deleteOldDNSRecords(zoneId);
+      // Get redirect ruleset
+      const ruleset = await getRedirectRuleset(zoneId);
 
-      // Create or update ruleset with redirect rules
-      console.log(`Creating/updating redirect rules for ${rules.length} redirects`);
-      await createOrUpdateRuleset(zoneId, rules);
+      // Get existing rules
+      const existingRules = await getRulesetRules(zoneId, ruleset.id);
+
+      // Filter out auto-generated rules
+      const nonAutoRules = existingRules.filter(
+        (rule) => rule.description !== "auto-generated-redirect",
+      );
+
+      // Create new auto-generated rules
+      const newAutoRules = rules.map(({ source, target }) => ({
+        expression: `http.host == "${source}"`,
+        action: "redirect",
+        action_parameters: {
+          from_value: {
+            status_code: 301,
+            preserve_query_string: true,
+            target_url: {
+              value: target,
+            },
+          },
+        },
+        description: "auto-generated-redirect",
+      }));
+
+      // Combine rules
+      const updatedRules = [...nonAutoRules, ...newAutoRules];
+
+      console.log(`Updating ruleset with ${newAutoRules.length} new redirects`);
+      for (const { source, target } of rules) {
+        console.log(`Creating redirect: ${source} -> ${target}`);
+      }
+
+      // Update ruleset
+      await updateRulesetRules(zoneId, ruleset.id, updatedRules);
     }
 
-    console.log("DNS synchronization completed successfully");
+    console.log("Redirect synchronization completed successfully");
   } catch (error) {
     console.error("Sync failed:", error.message);
     process.exit(1);
@@ -191,3 +190,4 @@ if (require.main === module) {
 }
 
 module.exports = { syncRedirects };
+
