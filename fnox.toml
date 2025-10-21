@@ -1,0 +1,8 @@
+[providers.""]
+type = "bitwarden"
+
+[secrets.""]
+provider = ""
+
+[secrets.MY_SECRET]
+provider = "bitwarden"

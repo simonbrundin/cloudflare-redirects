@@ -2,6 +2,7 @@
   "version": "1.0",
   "redirects": {
     "aik.simonbrundin.com": "https://aik.se",
+    "home.simonbrundin.com": "https://simonsha.duckdns.org:8123",
     "bootstrap.simonbrundin.com": "https://raw.githubusercontent.com/simonbrundin/bootstrap/refs/heads/main/bootstrap.sh"
   }
 }

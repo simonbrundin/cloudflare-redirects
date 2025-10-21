@@ -32,7 +32,7 @@ async function getZoneId(domain) {
   }
 }
 
-async function getRedirectRuleset(zoneId) {
+async function getZoneRulesets(zoneId) {
   try {
     const response = await axios.get(
       `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
@@ -43,28 +43,72 @@ async function getRedirectRuleset(zoneId) {
         },
       },
     );
-    const rulesets = response.data.result;
-    let redirectRuleset = rulesets.find(
-      (rs) => rs.phase === "http_request_redirect",
+    return response.data.result;
+  } catch (error) {
+    throw new Error(
+      `Failed to get zone rulesets: ${error.response?.data?.errors?.[0]?.message || error.message}`,
     );
+  }
+}
+
+/**
+ * Gets or creates a redirect ruleset for the given zone.
+ * Handles Cloudflare's zone ruleset limits by reusing existing rulesets when approaching limits.
+ * If ruleset creation fails due to limits, attempts to reuse an existing ruleset.
+ */
+async function getRedirectRuleset(zoneId) {
+  try {
+    const rulesets = await getZoneRulesets(zoneId);
+    let redirectRuleset = rulesets.find(
+      (rs) => rs.phase === "http_request_dynamic_redirect" && rs.kind === "zone",
+    );
+
+    // Check if we're approaching the limit (Cloudflare has limits on zone rulesets per phase)
+    const zoneDynamicRedirectRulesets = rulesets.filter(
+      (rs) => rs.phase === "http_request_dynamic_redirect" && rs.kind === "zone",
+    );
+
     if (!redirectRuleset) {
-      // Create new ruleset
-      const createResponse = await axios.post(
-        `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
-        {
-          name: "Auto-generated redirects",
-          kind: "zone",
-          phase: "http_request_dynamic_redirect",
-          rules: [],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${API_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      redirectRuleset = createResponse.data.result;
+      if (zoneDynamicRedirectRulesets.length >= 10) {
+        // Try to find an existing ruleset to reuse instead of creating new
+        // This helps avoid hitting Cloudflare's ruleset limits
+        redirectRuleset = zoneDynamicRedirectRulesets[0];
+        console.log(`Reusing existing ruleset due to limit constraints: ${redirectRuleset.name}`);
+      } else {
+        // Create new ruleset
+        try {
+          const createResponse = await axios.post(
+            `${CLOUDFLARE_API_BASE}/zones/${zoneId}/rulesets`,
+            {
+              name: `Auto-generated redirects for ${zoneId}`,
+              kind: "zone",
+              phase: "http_request_dynamic_redirect",
+              rules: [],
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${API_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            },
+          );
+          redirectRuleset = createResponse.data.result;
+        } catch (createError) {
+          // If creation fails due to limits, try to reuse an existing ruleset
+          // This is a fallback mechanism when Cloudflare rejects new ruleset creation
+          if (createError.response?.data?.errors?.[0]?.message?.includes('exceeded maximum number of zone rulesets')) {
+            console.log('Ruleset limit reached, attempting to reuse existing ruleset...');
+            if (zoneDynamicRedirectRulesets.length > 0) {
+              redirectRuleset = zoneDynamicRedirectRulesets[0];
+              console.log(`Reusing existing ruleset: ${redirectRuleset.name}`);
+            } else {
+              throw new Error('Cannot create new ruleset and no existing rulesets available to reuse');
+            }
+          } else {
+            throw createError;
+          }
+        }
+      }
     }
     return redirectRuleset;
   } catch (error) {

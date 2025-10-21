@@ -29,6 +29,20 @@ function validateRedirectsConfig(configPath = "./redirects.json") {
       }
     }
 
+    // Check for potential Cloudflare ruleset limits
+    const zones = new Set();
+    for (const sourceDomain of Object.keys(config.redirects)) {
+      const domainParts = sourceDomain.split(".");
+      const zoneDomain = domainParts.slice(-2).join(".");
+      zones.add(zoneDomain);
+    }
+
+    const zoneCount = zones.size;
+    if (zoneCount > 5) {
+      console.warn(`Warning: ${zoneCount} unique zones detected. This may approach Cloudflare's zone ruleset limits.`);
+      console.warn("Consider consolidating redirects or using wildcard patterns if sync fails.");
+    }
+
     console.log("Configuration file is valid");
     return true;
   } catch (error) {
